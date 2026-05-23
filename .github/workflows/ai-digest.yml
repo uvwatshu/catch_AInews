@@ -1,0 +1,37 @@
+name: AI Investment Digest
+
+on:
+  schedule:
+    # 09:00 Asia/Shanghai = 01:00 UTC
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build and send digest
+        env:
+          AI_DIGEST_SMTP_USER: ${{ secrets.AI_DIGEST_SMTP_USER }}
+          AI_DIGEST_SMTP_AUTH_CODE: ${{ secrets.AI_DIGEST_SMTP_AUTH_CODE }}
+          AI_DIGEST_EMAIL_TO: ${{ secrets.AI_DIGEST_EMAIL_TO }}
+          AI_DIGEST_SMTP_HOST: smtp.163.com
+          AI_DIGEST_SMTP_PORT: "465"
+        run: python tools/build_ai_digest.py
+
+      - name: Upload digest artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-digest
+          path: out/*.txt
