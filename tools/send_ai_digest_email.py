@@ -23,10 +23,10 @@ def main() -> None:
     parser.add_argument("--from-addr", default=os.getenv("AI_DIGEST_SMTP_USER", "huanghongwei0308@163.com"))
     args = parser.parse_args()
 
-    smtp_host = os.getenv("AI_DIGEST_SMTP_HOST", "smtp.163.com")
-    smtp_port = int(os.getenv("AI_DIGEST_SMTP_PORT", "465"))
-    smtp_user = os.getenv("AI_DIGEST_SMTP_USER", args.from_addr)
-    smtp_password = os.getenv("AI_DIGEST_SMTP_AUTH_CODE")
+    smtp_host = os.getenv("AI_DIGEST_SMTP_HOST", "smtp.163.com").strip()
+    smtp_port = int(os.getenv("AI_DIGEST_SMTP_PORT", "465").strip())
+    smtp_user = os.getenv("AI_DIGEST_SMTP_USER", args.from_addr).strip()
+    smtp_password = (os.getenv("AI_DIGEST_SMTP_AUTH_CODE") or "").strip()
 
     if not smtp_password:
         raise SystemExit("Missing AI_DIGEST_SMTP_AUTH_CODE. Use the 163 client authorization code, not the login password.")
