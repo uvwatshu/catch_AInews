@@ -2,13 +2,13 @@ name: AI Investment Digest
 
 on:
   schedule:
-    # Noon-ish Asia/Shanghai fallback windows. GitHub scheduled jobs can be
+    # 18:00-ish Asia/Shanghai fallback windows. GitHub scheduled jobs can be
     # delayed or dropped, so several non-zero-minute slots are used and the job
     # deduplicates by China-local date before sending.
-    - cron: "7 4 * * *"
-    - cron: "17 4 * * *"
-    - cron: "37 4 * * *"
-    - cron: "7 5 * * *"
+    - cron: "7 10 * * *"
+    - cron: "17 10 * * *"
+    - cron: "37 10 * * *"
+    - cron: "7 11 * * *"
   workflow_dispatch:
 
 jobs:
