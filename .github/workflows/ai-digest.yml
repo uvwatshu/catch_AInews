@@ -2,9 +2,13 @@ name: AI Investment Digest
 
 on:
   schedule:
-    # 12:17 Asia/Shanghai = 04:17 UTC.
-    # Avoid minute 0 because GitHub schedule jobs can be delayed or dropped at hourly peaks.
+    # Noon-ish Asia/Shanghai fallback windows. GitHub scheduled jobs can be
+    # delayed or dropped, so several non-zero-minute slots are used and the job
+    # deduplicates by China-local date before sending.
+    - cron: "7 4 * * *"
     - cron: "17 4 * * *"
+    - cron: "37 4 * * *"
+    - cron: "7 5 * * *"
   workflow_dispatch:
 
 jobs:
@@ -23,7 +27,19 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Compute digest date
+        id: digest-date
+        run: echo "date=$(TZ=Asia/Shanghai date +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Check daily sent marker
+        id: sent-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .digest-sent
+          key: ai-digest-sent-${{ steps.digest-date.outputs.date }}
+
       - name: Build and send digest
+        if: steps.sent-cache.outputs.cache-hit != 'true'
         env:
           AI_DIGEST_SMTP_USER: ${{ secrets.AI_DIGEST_SMTP_USER }}
           AI_DIGEST_SMTP_AUTH_CODE: ${{ secrets.AI_DIGEST_SMTP_AUTH_CODE }}
@@ -32,9 +48,23 @@ jobs:
           AI_DIGEST_SMTP_PORT: "465"
         run: python tools/build_ai_digest.py
 
+      - name: Mark digest sent
+        if: success() && steps.sent-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .digest-sent
+          echo "${{ steps.digest-date.outputs.date }}" > ".digest-sent/${{ steps.digest-date.outputs.date }}.txt"
+
+      - name: Save daily sent marker
+        if: success() && steps.sent-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .digest-sent
+          key: ai-digest-sent-${{ steps.digest-date.outputs.date }}
+
       - name: Upload digest artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ai-digest
           path: out/*.txt
+          if-no-files-found: ignore
