@@ -2,8 +2,9 @@ name: AI Investment Digest
 
 on:
   schedule:
-    # 09:00 Asia/Shanghai = 01:00 UTC
-    - cron: "0 1 * * *"
+    # 09:17 Asia/Shanghai = 01:17 UTC.
+    # Avoid minute 0 because GitHub schedule jobs can be delayed or dropped at hourly peaks.
+    - cron: "17 1 * * *"
   workflow_dispatch:
 
 jobs:
