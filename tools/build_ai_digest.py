@@ -9,6 +9,7 @@ import sys
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,11 @@ from pathlib import Path
 CHINA_TZ = dt.timezone(dt.timedelta(hours=8))
 OPEN_SEARCH = "\u5f00\u653e\u641c\u7d22"
 FIXED_RSS = "\u56fa\u5b9aRSS"
+NEWS_SEARCH = "\u65b0\u95fb\u641c\u7d22"
+WEB_SEARCH = "\u5168\u7f51\u641c\u7d22"
+WECHAT_SEARCH = "\u516c\u4f17\u53f7/\u5a92\u4f53\u7ebf\u7d22"
+JOB_SEARCH = "\u62db\u8058\u4fe1\u53f7"
+DATABASE_SEARCH = "\u6570\u636e\u5e93\u7ebf\u7d22"
 REPORT_TITLE = "AI\u521b\u6295\u7ebf\u7d22\u65e5\u62a5"
 REGISTRY_NOTE = "\u672a\u63a5\u5165\u5de5\u5546\u6570\u636e\u6e90\uff0c\u6682\u4e0d\u81ea\u52a8\u786e\u8ba4\u6ce8\u518c\u540d\u548c\u5730\u5740"
 
@@ -33,6 +39,7 @@ class Item:
     summary: str = ""
     company: str = ""
     region: str = ""
+    channel: str = ""
 
 
 DIRECT_SEARCH_QUERIES = [
@@ -101,11 +108,44 @@ CHANNEL_QUERIES = [
 ]
 
 
+JOB_QUERIES = [
+    "site:zhipin.com AI Agent \u521b\u4e1a\u516c\u53f8 \u62db\u8058",
+    "site:zhipin.com \u5927\u6a21\u578b \u521b\u4e1a\u516c\u53f8 \u62db\u8058",
+    "site:zhipin.com AIGC \u521b\u4e1a\u516c\u53f8 \u62db\u8058",
+    "site:zhipin.com \u5177\u8eab\u667a\u80fd \u521b\u4e1a\u516c\u53f8 \u62db\u8058",
+    "site:liepin.com AI Agent \u521b\u4e1a\u516c\u53f8 \u62db\u8058",
+    "site:lagou.com AI \u521b\u4e1a\u516c\u53f8 \u62db\u8058",
+    "site:maimai.cn AI \u521b\u4e1a\u516c\u53f8 \u62db\u8058",
+    "site:linkedin.com/jobs AI startup China hiring",
+    "site:ycombinator.com/jobs AI agent startup hiring",
+]
+
+
+DATABASE_QUERIES = [
+    "site:itjuzi.com AI \u878d\u8d44",
+    "site:itjuzi.com \u4eba\u5de5\u667a\u80fd \u878d\u8d44",
+    "site:itjuzi.com/company AI",
+    "site:pedaily.cn AI \u878d\u8d44 \u6295\u8d44\u754c",
+    "site:36kr.com/p/ AI \u878d\u8d44",
+    "site:cyzone.cn AI \u878d\u8d44",
+]
+
+
+WECHAT_WEB_QUERIES = [
+    "site:mp.weixin.qq.com AI \u521b\u4e1a \u878d\u8d44",
+    "site:mp.weixin.qq.com AI Agent \u521b\u4e1a \u878d\u8d44",
+    "site:weixin.sogou.com AING\u786c\u8ff9 AI \u521b\u4e1a",
+    "site:weixin.sogou.com \u6697\u6d8cWaves AI \u878d\u8d44",
+    "site:weixin.sogou.com \u5341\u5b57\u8def\u53e3crossing AI \u521b\u4e1a",
+    "site:weixin.sogou.com \u7279\u5de5\u5b87\u5b99 AI \u521b\u4e1a",
+    "site:weixin.sogou.com IT\u6854\u5b50 AI \u878d\u8d44",
+    "site:weixin.sogou.com \u94c5\u7b14\u9053 AI \u878d\u8d44",
+]
+
+
 RSS_FEEDS = [
-    ("a16z", "https://a16z.com/feed/"),
     ("TechCrunch AI", "https://techcrunch.com/category/artificial-intelligence/feed/"),
     ("VentureBeat AI", "https://venturebeat.com/category/ai/feed/"),
-    ("Product Hunt", "https://www.producthunt.com/feed"),
 ]
 
 
@@ -151,7 +191,7 @@ def text_of(parent: ET.Element, tag: str) -> str:
     return ""
 
 
-def parse_feed(content: bytes, source: str, discovered_by: str, query: str) -> list[Item]:
+def parse_feed(content: bytes, source: str, discovered_by: str, query: str, channel: str = "") -> list[Item]:
     root = ET.fromstring(content)
     items: list[Item] = []
     for entry in root.findall(".//item"):
@@ -160,7 +200,7 @@ def parse_feed(content: bytes, source: str, discovered_by: str, query: str) -> l
         published_text, published_at = normalize_date(text_of(entry, "pubDate"))
         summary = re.sub("<[^>]+>", "", text_of(entry, "description"))
         if title and link:
-            items.append(enrich_item(Item(title, link, source, published_text, published_at, discovered_by, query, summary)))
+            items.append(enrich_item(Item(title, link, source, published_text, published_at, discovered_by, query, summary, channel=channel or discovered_by)))
 
     atom = "{http://www.w3.org/2005/Atom}"
     for entry in root.findall(f"{atom}entry"):
@@ -170,7 +210,7 @@ def parse_feed(content: bytes, source: str, discovered_by: str, query: str) -> l
         published_text, published_at = normalize_date(text_of(entry, f"{atom}updated"))
         summary = re.sub("<[^>]+>", "", text_of(entry, f"{atom}summary"))
         if title and link:
-            items.append(enrich_item(Item(title, link, source, published_text, published_at, discovered_by, query, summary)))
+            items.append(enrich_item(Item(title, link, source, published_text, published_at, discovered_by, query, summary, channel=channel or discovered_by)))
     return items
 
 
@@ -201,36 +241,128 @@ def bing_news_url(query: str) -> str:
     return f"https://www.bing.com/news/search?{params}"
 
 
+def bing_web_url(query: str) -> str:
+    params = urllib.parse.urlencode({"q": query, "format": "rss", "setlang": "zh-Hans"})
+    return f"https://www.bing.com/search?{params}"
+
+
 def collect_items(days: int) -> tuple[list[Item], list[str]]:
     items: list[Item] = []
     errors: list[str] = []
-    jobs: list[tuple[str, str, str, str]] = []
+    jobs: list[tuple[str, str, str, str, str]] = []
 
     for source, url in RSS_FEEDS:
-        jobs.append((source, url, FIXED_RSS, source))
+        jobs.append((source, url, FIXED_RSS, source, FIXED_RSS))
 
-    for query in DIRECT_SEARCH_QUERIES + SITE_QUERIES + CHANNEL_QUERIES:
-        jobs.append(("Google News", google_news_url(query, days), OPEN_SEARCH, query))
-        jobs.append(("Bing News", bing_news_url(query), OPEN_SEARCH, query))
+    for query in DIRECT_SEARCH_QUERIES:
+        jobs.append(("Google News", google_news_url(query, days), NEWS_SEARCH, query, OPEN_SEARCH))
+        jobs.append(("Bing News", bing_news_url(query), NEWS_SEARCH, query, OPEN_SEARCH))
+
+    for query in SITE_QUERIES:
+        jobs.append(("Bing Web", bing_web_url(query), WEB_SEARCH, query, WEB_SEARCH))
+        jobs.append(("Google News", google_news_url(query, days), NEWS_SEARCH, query, WEB_SEARCH))
+
+    for query in CHANNEL_QUERIES + WECHAT_WEB_QUERIES:
+        jobs.append(("Bing Web", bing_web_url(query), WECHAT_SEARCH, query, WECHAT_SEARCH))
+        jobs.append(("Google News", google_news_url(query, days), WECHAT_SEARCH, query, WECHAT_SEARCH))
+
+    for query in JOB_QUERIES:
+        jobs.append(("Bing Web", bing_web_url(query), JOB_SEARCH, query, JOB_SEARCH))
+
+    for query in DATABASE_QUERIES:
+        jobs.append(("Bing Web", bing_web_url(query), DATABASE_SEARCH, query, DATABASE_SEARCH))
+        jobs.append(("Google News", google_news_url(query, days), DATABASE_SEARCH, query, DATABASE_SEARCH))
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         future_map = {
-            executor.submit(fetch_url, url): (source, discovered_by, query)
-            for source, url, discovered_by, query in jobs
+            executor.submit(fetch_url, url): (source, discovered_by, query, channel)
+            for source, url, discovered_by, query, channel in jobs
         }
         for future in as_completed(future_map):
-            source, discovered_by, query = future_map[future]
+            source, discovered_by, query, channel = future_map[future]
             try:
-                items.extend(parse_feed(future.result(), source, discovered_by, query))
+                items.extend(parse_feed(future.result(), source, discovered_by, query, channel))
             except Exception as exc:
                 errors.append(f"{source} / {query}: {exc}")
 
-    return dedupe(filter_recent(items, days)), errors
+    return dedupe(filter_relevant(filter_recent(items, days))), errors
 
 
 def filter_recent(items: list[Item], days: int) -> list[Item]:
     cutoff = dt.datetime.now(CHINA_TZ) - dt.timedelta(days=days)
     return [item for item in items if item.published_at is None or item.published_at >= cutoff]
+
+
+def is_low_quality_item(item: Item) -> bool:
+    text = f"{item.title} {item.summary} {item.url}".lower()
+    bad_fragments = [
+        "baidu baike",
+        "\u767e\u5ea6\u767e\u79d1",
+        "\u516c\u5141\u4ef7\u503c\u53d8\u52a8",
+        "\u4ea4\u6613\u6027\u91d1",
+        "cnki",
+        "\u77e5\u7f51aigc\u68c0\u6d4b",
+        "\u8ba9\u4e00\u90e8\u5206\u4eba\u5148\u770b\u5230\u672a\u6765",
+        "google gemini",
+        "deepai",
+        "copilot",
+        "chatgpt",
+        "free ai chatbot",
+        "glm-5",
+        "msn.com",
+    ]
+    return any(fragment in text for fragment in bad_fragments)
+
+
+def filter_relevant(items: list[Item]) -> list[Item]:
+    positive_terms = [
+        "ai",
+        "agent",
+        "llm",
+        "aigc",
+        "\u4eba\u5de5\u667a\u80fd",
+        "\u5927\u6a21\u578b",
+        "\u667a\u80fd\u4f53",
+        "\u521b\u4e1a",
+        "\u878d\u8d44",
+        "\u62db\u8058",
+        "\u673a\u5668\u4eba",
+        "\u5177\u8eab\u667a\u80fd",
+        "\u6295\u8d44",
+    ]
+    negative_terms = [
+        "crypto",
+        "bitcoin",
+        "ethereum",
+        "token",
+        "\u52a0\u5bc6\u8d27\u5e01",
+        "wordpress",
+        "quiz",
+        "questions and answers",
+        "contact us",
+        "microsoft support",
+        "privacy policy",
+        "terms of use",
+        "help center",
+        "customer service",
+        "evtol",
+        "\u4f4e\u7a7a\u7ecf\u6d4e",
+        "\u503e\u8f6c",
+        "baidu baike",
+        "\u767e\u5ea6\u767e\u79d1",
+        "\u516c\u5141\u4ef7\u503c\u53d8\u52a8",
+        "\u4ea4\u6613\u6027\u91d1",
+        "\u6307\u7684\u662f",
+    ]
+    relevant: list[Item] = []
+    for item in items:
+        text = f"{item.title} {item.summary}".lower()
+        if is_low_quality_item(item):
+            continue
+        if any(term in text for term in positive_terms):
+            if not any(term in text for term in negative_terms):
+                relevant.append(item)
+    return relevant
 
 
 def dedupe(items: list[Item]) -> list[Item]:
@@ -275,6 +407,28 @@ def event_fingerprint(item: Item) -> str:
     return ""
 
 
+def item_identity(item: Item) -> str:
+    event_key = event_fingerprint(item)
+    if event_key:
+        return event_key
+    if item.company and item.company != "\u672a\u8bc6\u522b":
+        return f"company:{item.company.lower()}"
+    return normalize_url(item.url) or title_fingerprint(item.title)
+
+
+def select_items(items: list[Item], used: set[str], limit: int, predicate) -> list[Item]:
+    selected: list[Item] = []
+    for item in items:
+        key = item_identity(item)
+        if key in used or not predicate(item):
+            continue
+        selected.append(item)
+        used.add(key)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
 def entity_keys(title: str) -> set[str]:
     generic = {
         "agent",
@@ -289,6 +443,25 @@ def entity_keys(title: str) -> set[str]:
         "google",
         "microsoft",
         "visual",
+        "has",
+        "capital",
+        "ventures",
+        "news",
+        "human",
+        "machine",
+        "cryptorank",
+        "app",
+        "with",
+        "elevenlabs-powered",
+        "erhard",
+        "spotify",
+        "ferrari",
+        "redirecting",
+        "ibm",
+        "deployment",
+        "gemini",
+        "chatbot",
+        "msn",
     }
     keys: set[str] = set()
     for match in re.findall(r"\b[A-Z][A-Za-z0-9-]{2,}(?:\s+AI)?\b", title):
@@ -300,20 +473,34 @@ def entity_keys(title: str) -> set[str]:
 
 def extract_company(item: Item) -> str:
     text = re.sub(r"\s+", " ", f"{item.title} {item.summary}").strip()
+    prefix = re.match(r"^([A-Za-z0-9][A-Za-z0-9.-]{1,30})\s+-\s+", item.title)
+    if prefix:
+        return clean_company(prefix.group(1))
+
+    financing_prefix = re.match(
+        r"^(?:\u878d\u8d44[\u4e28|｜]\s*)?([A-Za-z][A-Za-z0-9.-]{1,40}(?:\uff08[^）]{2,24}\uff09)?)(?:\u5ba3\u5e03|\u5b8c\u6210|\u83b7|\u878d\u8d44)",
+        item.title,
+    )
+    if financing_prefix:
+        return clean_company(financing_prefix.group(1))
+
     quoted = re.search(r"[\u300c\u300e\u201c\u201d\"']([^\"\u201c\u201d\u300d\u300f]{2,40}?)[\u300d\u300f\u201d\"']", text)
-    if quoted:
+    if quoted and re.search(r"[A-Za-z0-9]", quoted.group(1)) and not text[quoted.end(): quoted.end() + 1] == "\u7684":
         return clean_company(quoted.group(1))
 
     latin_patterns = [
+        r"(?:AI\s*(?:\u521b\u4f01|\u521b\u4e1a\u516c\u53f8)\s+)([A-Z][A-Za-z0-9-]{2,}(?:\s+AI|\s+Labs|\s+Robotics|\s+Systems|\s+Cloud|\s+Search|\s+Health|\s+Technologies)?)",
+        r"(?:\u9886\u6295|\u6295\u8d44|backs?|led by)\s*([A-Z][A-Za-z0-9-]{2,}(?:\s+AI|\s+Labs|\s+Robotics|\s+Systems|\s+Cloud|\s+Search|\s+Health|\s+Technologies)?)",
         r"([A-Z][A-Za-z0-9-]{2,}(?:\s+AI|\s+Labs|\s+Robotics|\s+Systems|\s+Cloud|\s+Search|\s+Health|\s+Technologies)?)\s*(?:\u516c\u53f8)?(?:\u878d\u8d44|\u5b8c\u6210|\u83b7|raises?|raised|secures?)",
         r"(?:\u6295\u8d44|backs?|led by|from)\s+([A-Z][A-Za-z0-9-]{2,}(?:\s+AI|\s+Labs|\s+Robotics|\s+Systems|\s+Cloud|\s+Search)?)",
     ]
     for pattern in latin_patterns:
-        found = re.search(pattern, text, re.I)
+        found = re.search(pattern, text)
         if found:
             return clean_company(found.group(1))
 
     chinese_patterns = [
+        r"(?:\u4f01\u4e1a|\u516c\u53f8|\u521b\u4f01)([\u4e00-\u9fffA-Za-z0-9]{2,16})(?:\u5ba3\u5e03|\u5b8c\u6210|\u83b7|\u878d\u8d44)",
         r"([\u4e00-\u9fffA-Za-z0-9]{2,24})(?:\u516c\u53f8)?(?:\u5ba3\u5e03|\u5b8c\u6210|\u83b7|\u8fde\u7eed\u5b8c\u6210).{0,8}(?:\u878d\u8d44|\u8f6e)",
         r"([\u4e00-\u9fffA-Za-z0-9]{2,24})(?:\u516c\u53f8)?(?:\u878d\u8d44|\u83b7\u6295|\u83b7\u6570)",
     ]
@@ -330,8 +517,27 @@ def extract_company(item: Item) -> str:
 
 def clean_company(raw: str) -> str:
     value = re.sub(r"\s+", " ", raw).strip(" -_\u300a\u300b:：，,。")
+    if value and value[0].islower():
+        return "\u672a\u8bc6\u522b"
+    if value.startswith("\u5b8c\u6210"):
+        return "\u672a\u8bc6\u522b"
     value = re.sub(r"\u516c\u53f8$", "", value)
-    value = re.sub(r"(\u8fde\u7eed|\u6b63\u5f0f|\u8fd1\u65e5)$", "", value)
+    value = re.sub(r"(\u8fde\u7eed|\u6b63\u5f0f|\u8fd1\u65e5|\u53c8)$", "", value)
+    if value.endswith("\u6280\u672f") and "\u516c\u53f8" not in raw:
+        return "\u672a\u8bc6\u522b"
+    if re.search(r"(?:pre-)?[a-d]?\d?\u8f6e", value.lower()):
+        return "\u672a\u8bc6\u522b"
+    bad_fragments = [
+        "\u516c\u5141\u4ef7\u503c",
+        "\u4ea4\u6613\u6027\u91d1",
+        "\u4f01\u4e1a\u6301\u6709",
+        "\u5b83\u6307\u7684\u662f",
+        "\u5c24\u5176\u5728\u91d1",
+        "\u5b8c\u6210\u6570\u5343\u4e07",
+        "\u5929\u4f7f\u8f6e",
+    ]
+    if any(fragment in value for fragment in bad_fragments):
+        return "\u672a\u8bc6\u522b"
     stop_words = [
         "\u7f8e\u56fe\u9886\u6295",
         "\u6295\u8d44\u754c",
@@ -342,9 +548,28 @@ def clean_company(raw: str) -> str:
         "\u83b7\u5f97",
         "AI",
         "The",
+        "has",
+        "Capital",
+        "Ventures",
+        "Google News",
+        "Bing News",
+        "App",
+        "With",
+        "Elevenlabs-Powered",
+        "Erhard",
+        "Spotify",
+        "Ferrari",
+        "Redirecting",
+        "Ibm",
+        "IBM",
+        "Deployment",
+        "Gemini",
+        "Chatbot",
+        "Msn",
+        "MSN",
     ]
     for word in stop_words:
-        if value == word:
+        if value == word or value.lower() == word.lower():
             return "\u672a\u8bc6\u522b"
     return value[:60] if value else "\u672a\u8bc6\u522b"
 
@@ -366,7 +591,13 @@ def infer_region(item: Item) -> str:
         "\u534e\u4e3a",
         "\u7f8e\u56fe",
         "\u4ebf\u5143",
+        "\u4e07\u5143",
+        "\u6570\u5343\u4e07",
         "\u4eba\u6c11\u5e01",
+        "\u9ad8\u74f4",
+        "\u4e2d\u79d1\u521b\u661f",
+        "\u521b\u4e1a\u90a6",
+        "\u6295\u8d44\u754c",
         "\u6d2a\u6cf0\u57fa\u91d1",
         "\u6b63\u666f\u57fa\u91d1",
         "\u6e05\u534e",
@@ -418,7 +649,7 @@ def registry_line(item: Item) -> str:
 
 
 def score_item(item: Item) -> int:
-    haystack = f"{item.title} {item.summary} {item.source} {item.query}".lower()
+    haystack = f"{item.title} {item.summary} {item.source}".lower()
     score = 0
     for keyword, weight in KEYWORD_WEIGHTS.items():
         if keyword in haystack:
@@ -431,7 +662,7 @@ def score_item(item: Item) -> int:
 
 
 def credibility(item: Item) -> str:
-    lower = f"{item.source} {item.url}".lower()
+    lower = f"{item.title} {item.source} {item.url}".lower()
     if any(domain in lower for domain in ["a16z.com", "ycombinator.com", "producthunt.com"]):
         return "A/B"
     if any(name in lower for name in ["techcrunch", "venturebeat", "36kr", "pedaily", "cyzone", "leiphone", "huxiu"]):
@@ -441,19 +672,74 @@ def credibility(item: Item) -> str:
     return "C"
 
 
+def is_job_signal(item: Item) -> bool:
+    text = f"{item.title} {item.summary}".lower()
+    url = item.url.lower()
+    positive = ["\u62db\u8058", "\u5c97\u4f4d", "\u5de5\u7a0b\u5e08", "\u7b97\u6cd5", "\u7814\u53d1", "hiring", "jobs", "careers", "engineer", "scientist"]
+    negative = ["quiz", "questions and answers", "wordpress", "\u9762\u8bd5\u9898", "\u9898\u5e93"]
+    job_domains = ["zhipin.com", "liepin.com", "lagou.com", "linkedin.com/jobs", "ycombinator.com/jobs"]
+    return any(domain in url for domain in job_domains) and any(word in text for word in positive) and not any(word in text for word in negative)
+
+
+def is_startup_signal(item: Item) -> bool:
+    text = f"{item.title} {item.summary}".lower()
+    strong_terms = [
+        "\u878d\u8d44",
+        "\u9886\u6295",
+        "\u8ddf\u6295",
+        "\u83b7\u6295",
+        "\u5929\u4f7f\u8f6e",
+        "\u79cd\u5b50\u8f6e",
+        "pre-a",
+        " a\u8f6e",
+        "seed",
+        "series",
+        "funding",
+        "raised",
+        "secures",
+        "backs",
+        "startup",
+        "\u521b\u4e1a\u516c\u53f8",
+        "\u521b\u4f01",
+        "\u79bb\u804c\u521b\u4e1a",
+        "\u65b0\u6210\u7acb",
+    ]
+    return any(term in text for term in strong_terms)
+
+
 def build_report(items: list[Item], errors: list[str], today: dt.date) -> str:
     ranked = sorted(items, key=score_item, reverse=True)
-    top = ranked[:12]
-    a16z = [item for item in ranked if "a16z" in f"{item.title} {item.source} {item.url}".lower()][:6]
-    surprises = [item for item in ranked if item.discovered_by == OPEN_SEARCH][:8]
+    used: set[str] = set()
+    top = []
+    has_company = lambda item: item.company and item.company != "\u672a\u8bc6\u522b"
+    top.extend(select_items(ranked, used, 4, lambda item: has_company(item) and is_startup_signal(item) and item.channel in {WECHAT_SEARCH, DATABASE_SEARCH}))
+    top.extend(select_items(ranked, used, 2, lambda item: item.channel == JOB_SEARCH and is_job_signal(item)))
+    top.extend(
+        select_items(
+            ranked,
+            used,
+            4,
+            lambda item: has_company(item)
+            and item.channel in {OPEN_SEARCH, WEB_SEARCH}
+            and is_startup_signal(item)
+            and score_item(item) >= 8,
+        )
+    )
+    a16z = select_items(ranked, used, 5, lambda item: "a16z" in f"{item.title} {item.source} {item.url}".lower())
+    channel_items = select_items(ranked, used, 8, lambda item: item.channel == WECHAT_SEARCH and is_startup_signal(item))
+    job_items = select_items(ranked, used, 6, lambda item: item.channel == JOB_SEARCH and is_job_signal(item))
+    database_items = select_items(ranked, used, 6, lambda item: item.channel == DATABASE_SEARCH and is_startup_signal(item))
+    surprises = select_items(ranked, used, 6, lambda item: item.channel in {OPEN_SEARCH, WEB_SEARCH} and is_startup_signal(item))
+    channel_counts = Counter(item.channel or item.discovered_by for item in items)
 
     lines = [
         f"{REPORT_TITLE} - {today.isoformat()}",
         "",
         "\u6267\u884c\u6982\u89c8",
         f"- \u5019\u9009\u7ebf\u7d22\uff1a{len(items)} \u6761\uff08\u5df2\u505a URL/\u6807\u9898/\u516c\u53f8/\u4e8b\u4ef6\u7ea7\u53bb\u91cd\uff09",
-        f"- \u91c7\u96c6\u6e20\u9053\uff1a{len(RSS_FEEDS)} \u4e2a\u56fa\u5b9a RSS\uff0c{len(DIRECT_SEARCH_QUERIES)} \u7ec4\u5f00\u653e\u641c\u7d22\uff0c{len(SITE_QUERIES)} \u7ec4\u7ad9\u70b9\u641c\u7d22\uff0c{len(CHANNEL_QUERIES)} \u7ec4\u516c\u4f17\u53f7/\u5a92\u4f53\u540d\u641c\u7d22",
-        "- \u8986\u76d6\u8fb9\u754c\uff1aGitHub Actions \u4e0d\u767b\u5f55\u5fae\u4fe1\uff0c\u4e0d\u4f1a\u9010\u7bc7\u6293\u53d6\u516c\u4f17\u53f7\u539f\u6587\uff1b\u5b83\u4f1a\u6bcf\u5929\u8dd1\u5b8c\u4e0a\u8ff0\u516c\u5f00 RSS \u548c\u641c\u7d22\u4efb\u52a1\u3002",
+        f"- \u91c7\u96c6\u4efb\u52a1\uff1a{len(RSS_FEEDS)} \u4e2a RSS\uff0c{len(DIRECT_SEARCH_QUERIES)} \u7ec4\u5f00\u653e\u641c\u7d22\uff0c{len(SITE_QUERIES)} \u7ec4\u7ad9\u70b9\u641c\u7d22\uff0c{len(CHANNEL_QUERIES) + len(WECHAT_WEB_QUERIES)} \u7ec4\u516c\u4f17\u53f7/\u5a92\u4f53\u641c\u7d22\uff0c{len(JOB_QUERIES)} \u7ec4\u62db\u8058\u641c\u7d22\uff0c{len(DATABASE_QUERIES)} \u7ec4\u6570\u636e\u5e93\u641c\u7d22",
+        f"- \u547d\u4e2d\u5206\u5e03\uff1aRSS {channel_counts.get(FIXED_RSS, 0)}\uff1b\u5a92\u4f53/\u516c\u4f17\u53f7 {channel_counts.get(WECHAT_SEARCH, 0)}\uff1b\u62db\u8058 {channel_counts.get(JOB_SEARCH, 0)}\uff1b\u6570\u636e\u5e93 {channel_counts.get(DATABASE_SEARCH, 0)}\uff1b\u5168\u7f51/\u65b0\u95fb {channel_counts.get(OPEN_SEARCH, 0) + channel_counts.get(WEB_SEARCH, 0)}",
+        "- \u8986\u76d6\u8fb9\u754c\uff1aGitHub Actions \u4e0d\u767b\u5f55\u5fae\u4fe1\u3001BOSS\u76f4\u8058\u6216 IT\u6854\u5b50\uff1b\u8fd9\u4e9b\u6e20\u9053\u76ee\u524d\u901a\u8fc7\u516c\u5f00\u641c\u7d22\u7d22\u5f15\u548c\u8f6c\u8f7d\u9875\u6293\u7ebf\u7d22\uff0c\u4e0d\u7b49\u4e8e\u5df2\u767b\u5f55\u5e73\u53f0\u9010\u9875\u6293\u53d6\u3002",
         "",
         "\u4eca\u65e5\u91cd\u70b9\u7ebf\u7d22",
     ]
@@ -467,7 +753,28 @@ def build_report(items: list[Item], errors: list[str], today: dt.date) -> str:
     else:
         lines.append("- \u4eca\u65e5\u672a\u6293\u5230\u65b0\u7684 a16z \u9ad8\u76f8\u5173\u516c\u5f00\u7ebf\u7d22\u3002")
 
-    lines.extend(["", "\u5f00\u653e\u641c\u7d22\u610f\u5916\u53d1\u73b0"])
+    lines.extend(["", "\u516c\u4f17\u53f7/\u5a92\u4f53\u7ebf\u7d22"])
+    if channel_items:
+        for index, item in enumerate(channel_items, 1):
+            lines.extend(format_item(index, item, compact=True))
+    else:
+        lines.append("- \u4eca\u65e5\u516c\u5f00\u641c\u7d22\u7d22\u5f15\u672a\u547d\u4e2d\u53ef\u7528\u516c\u4f17\u53f7/\u5a92\u4f53\u7ebf\u7d22\u3002")
+
+    lines.extend(["", "\u62db\u8058\u4fe1\u53f7\uff08BOSS/\u730e\u8058/\u62c9\u52fe/LinkedIn/YC Jobs \u7d22\u5f15\uff09"])
+    if job_items:
+        for index, item in enumerate(job_items, 1):
+            lines.extend(format_item(index, item, compact=True))
+    else:
+        lines.append("- \u4eca\u65e5\u672a\u4ece\u516c\u5f00\u641c\u7d22\u7d22\u5f15\u547d\u4e2d\u9ad8\u76f8\u5173\u62db\u8058\u7ebf\u7d22\u3002")
+
+    lines.extend(["", "\u6570\u636e\u5e93\u7ebf\u7d22\uff08IT\u6854\u5b50/\u6295\u8d44\u754c/36\u6c2a/\u521b\u4e1a\u90a6\u7d22\u5f15\uff09"])
+    if database_items:
+        for index, item in enumerate(database_items, 1):
+            lines.extend(format_item(index, item, compact=True))
+    else:
+        lines.append("- \u4eca\u65e5\u672a\u4ece\u516c\u5f00\u641c\u7d22\u7d22\u5f15\u547d\u4e2d\u9ad8\u76f8\u5173\u6570\u636e\u5e93\u7ebf\u7d22\u3002")
+
+    lines.extend(["", "\u5f00\u653e\u641c\u7d22\u8865\u5145\uff08\u5df2\u6392\u9664\u524d\u6587\u91cd\u590d\u9879\uff09"])
     if surprises:
         for index, item in enumerate(surprises, 1):
             lines.extend(format_item(index, item, compact=True))
@@ -496,11 +803,12 @@ def build_report(items: list[Item], errors: list[str], today: dt.date) -> str:
 
 
 def format_item(index: int, item: Item, compact: bool = False) -> list[str]:
+    display_name = item.company if item.company and item.company != "\u672a\u8bc6\u522b" else item.title
     lines = [
         "",
-        f"{index}. {item.company if item.company else item.title}",
+        f"{index}. {display_name}",
         f"   \u6807\u9898\uff1a{item.title}",
-        f"   \u5730\u533a\uff1a{item.region}\uff1b\u53ef\u4fe1\u5ea6\uff1a{credibility(item)}\uff1b\u53d1\u73b0\u65b9\u5f0f\uff1a{item.discovered_by}",
+        f"   \u5730\u533a\uff1a{item.region}\uff1b\u53ef\u4fe1\u5ea6\uff1a{credibility(item)}\uff1b\u6e20\u9053\uff1a{item.channel or item.discovered_by}\uff1b\u53d1\u73b0\u65b9\u5f0f\uff1a{item.discovered_by}",
         f"   \u6765\u6e90\uff1a{item.source}",
     ]
     if item.published:
@@ -521,7 +829,7 @@ def format_item(index: int, item: Item, compact: bool = False) -> list[str]:
 
 
 def reason_for(item: Item) -> str:
-    text = f"{item.title} {item.summary} {item.query}".lower()
+    text = f"{item.title} {item.summary}".lower()
     reasons: list[str] = []
     if any(word in text for word in ["\u878d\u8d44", "funding", "raised", "seed", "series"]):
         reasons.append("\u7591\u4f3c\u6295\u878d\u8d44\u6216\u8d44\u672c\u4e8b\u4ef6")
@@ -553,6 +861,8 @@ def send_report(subject: str, body_file: Path, to_addr: str, from_addr: str) -> 
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="Build and optionally email the AI investment digest.")
     parser.add_argument("--no-send", action="store_true", help="Only write the digest file.")
     parser.add_argument("--out-dir", default="out")
